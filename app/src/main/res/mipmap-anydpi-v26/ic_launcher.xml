@@ -1,0 +1,369 @@
+package com.example.inventory
+
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.os.Bundle
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.widget.ArrayAdapter
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.Spinner
+import android.widget.TableLayout
+import android.widget.TableRow
+import android.widget.TextView
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import com.google.android.material.floatingactionbutton.FloatingActionButton
+import com.google.android.material.tabs.TabLayout
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
+
+class MainActivity : AppCompatActivity() {
+
+    private lateinit var tabLayout: TabLayout
+    private lateinit var contentContainer: LinearLayout
+    private lateinit var fabAdd: FloatingActionButton
+    private lateinit var dbHelper: InventoryDbHelper
+
+    private val stores = listOf(
+        Store("master", "Master Summary"),
+        Store("nabulya", "Nabulya (Main)"),
+        Store("wesonga", "Wesonga"),
+        Store("church", "Church"),
+        Store("khu_gate", "Khu Gate"),
+        Store("mu_gate", "Mu Gate"),
+        Store("wa_godfrey", "Wa Godfrey")
+    )
+
+    private var activeStoreId: String = "master"
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        tabLayout = findViewById(R.id.tabLayout)
+        contentContainer = findViewById(R.id.contentContainer)
+        fabAdd = findViewById(R.id.fabAdd)
+        dbHelper = InventoryDbHelper(this)
+
+        setupTabs()
+        fabAdd.setOnClickListener { showAddDialog() }
+        renderContent()
+    }
+
+    private fun setupTabs() {
+        tabLayout.removeAllTabs()
+        stores.forEach { store ->
+            tabLayout.addTab(tabLayout.newTab().setText(store.name))
+        }
+
+        tabLayout.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
+            override fun onTabSelected(tab: TabLayout.Tab) {
+                activeStoreId = stores[tab.position].id
+                renderContent()
+            }
+
+            override fun onTabUnselected(tab: TabLayout.Tab) {}
+            override fun onTabReselected(tab: TabLayout.Tab) {}
+        })
+
+        val selected = stores.indexOfFirst { it.id == activeStoreId }
+        if (selected >= 0) tabLayout.getTabAt(selected)?.select()
+    }
+
+    private fun showAddDialog() {
+        if (activeStoreId == "master") {
+            showAddItemDialog()
+        } else {
+            showAddTransactionDialog()
+        }
+    }
+
+    private fun showAddItemDialog() {
+        val view = LayoutInflater.from(this).inflate(R.layout.dialog_add_item, null)
+        val itemName = view.findViewById<EditText>(R.id.itemNameInput)
+        val category = view.findViewById<EditText>(R.id.itemCategoryInput)
+        val uom = view.findViewById<EditText>(R.id.itemUomInput)
+        val reorderLevel = view.findViewById<EditText>(R.id.itemReorderInput)
+
+        AlertDialog.Builder(this)
+            .setTitle("Add New Master Item")
+            .setView(view)
+            .setPositiveButton("Save") { _, _ ->
+                val name = itemName.text.toString().trim()
+                val itemCategory = category.text.toString().trim()
+                val itemUom = uom.text.toString().trim()
+                val level = reorderLevel.text.toString().toIntOrNull() ?: 0
+
+                if (name.isNotEmpty() && itemCategory.isNotEmpty() && itemUom.isNotEmpty()) {
+                    val newItem = InventoryItem(
+                        id = System.currentTimeMillis(),
+                        name = name,
+                        category = itemCategory,
+                        uom = itemUom,
+                        reorderLevel = level
+                    )
+                    dbHelper.addItem(newItem)
+                    renderContent()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showAddTransactionDialog() {
+        val view = LayoutInflater.from(this).inflate(R.layout.dialog_add_transaction, null)
+        val itemSpinner = view.findViewById<Spinner>(R.id.transactionItemSpinner)
+        val dateInput = view.findViewById<EditText>(R.id.transactionDateInput)
+        val typeSpinner = view.findViewById<Spinner>(R.id.transactionTypeSpinner)
+        val qtyInput = view.findViewById<EditText>(R.id.transactionQtyInput)
+        val recipientInput = view.findViewById<EditText>(R.id.recipientInput)
+        val refInput = view.findViewById<EditText>(R.id.refInput)
+        val remarksInput = view.findViewById<EditText>(R.id.remarksInput)
+
+        val items = dbHelper.getItems()
+        val itemNames = items.map { it.name }
+        val itemAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, itemNames)
+        itemAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        itemSpinner.adapter = itemAdapter
+
+        val transactionTypes = listOf("RECEIVED", "ISSUED")
+        val typeAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, transactionTypes)
+        typeAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        typeSpinner.adapter = typeAdapter
+
+        val currentDate = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Calendar.getInstance().time)
+        dateInput.setText(currentDate)
+
+        AlertDialog.Builder(this)
+            .setTitle("Add Entry (${stores.first { it.id == activeStoreId }.name})")
+            .setView(view)
+            .setPositiveButton("Save") { _, _ ->
+                if (items.isEmpty()) return@setPositiveButton
+
+                val selectedItem = items[itemSpinner.selectedItemPosition]
+                val dateText = dateInput.text.toString().trim()
+                val qty = qtyInput.text.toString().toIntOrNull() ?: 1
+                val recipient = recipientInput.text.toString().trim()
+                val ref = refInput.text.toString().trim()
+                val remarks = remarksInput.text.toString().trim()
+                val type = typeSpinner.selectedItem as String
+
+                if (dateText.isNotEmpty()) {
+                    val transaction = InventoryTransaction(
+                        id = System.currentTimeMillis(),
+                        storeId = activeStoreId,
+                        itemId = selectedItem.id,
+                        date = dateText,
+                        type = type,
+                        qty = qty,
+                        recipient = recipient,
+                        ref = ref,
+                        remarks = remarks
+                    )
+                    dbHelper.addTransaction(transaction)
+                    renderContent()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun renderContent() {
+        contentContainer.removeAllViews()
+
+        if (activeStoreId == "master") {
+            renderMasterView()
+        } else {
+            renderStoreView(activeStoreId)
+        }
+    }
+
+    private fun renderMasterView() {
+        val items = dbHelper.getItems()
+        val txns = dbHelper.getTransactions()
+
+        items.forEach { item ->
+            var receivedTotal = 0
+            var issuedTotal = 0
+            val storeBalances = mutableMapOf<String, Int>()
+
+            stores.filter { it.id != "master" }.forEach { store ->
+                storeBalances[store.id] = 0
+            }
+
+            txns.filter { it.itemId == item.id }.forEach { txn ->
+                if (txn.type == "RECEIVED") {
+                    receivedTotal += txn.qty
+                    storeBalances[txn.storeId] = (storeBalances[txn.storeId] ?: 0) + txn.qty
+                } else {
+                    issuedTotal += txn.qty
+                    storeBalances[txn.storeId] = (storeBalances[txn.storeId] ?: 0) - txn.qty
+                }
+            }
+
+            val overallBalance = receivedTotal - issuedTotal
+            val statusText = when {
+                overallBalance == 0 -> "OUT OF STOCK"
+                overallBalance <= item.reorderLevel -> "LOW STOCK"
+                else -> "IN STOCK"
+            }
+
+            val badgeColor = when (statusText) {
+                "OUT OF STOCK" -> Color.parseColor("#F44336")
+                "LOW STOCK" -> Color.parseColor("#FF9800")
+                else -> Color.parseColor("#4CAF50")
+            }
+
+            val card = layoutInflater.inflate(R.layout.item_card, null)
+            val heading = card.findViewById<TextView>(R.id.heading)
+            val meta = card.findViewById<TextView>(R.id.meta)
+            val receivedText = card.findViewById<TextView>(R.id.receivedText)
+            val issuedText = card.findViewById<TextView>(R.id.issuedText)
+            val balanceText = card.findViewById<TextView>(R.id.balanceText)
+            val breakdown = card.findViewById<LinearLayout>(R.id.breakdownContainer)
+
+            val badge = TextView(this).apply {
+                text = statusText
+                setTextColor(Color.WHITE)
+                setTypeface(typeface, Typeface.BOLD)
+                setBackgroundColor(badgeColor)
+                setPadding(dpToPx(8), dpToPx(4), dpToPx(8), dpToPx(4))
+            }
+
+            val titleRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                weightSum = 2f
+                addView(TextView(this@MainActivity).apply {
+                    text = item.name
+                    textSize = 16f
+                    setTextColor(Color.WHITE)
+                    setTypeface(typeface, Typeface.BOLD)
+                }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                addView(badge, LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ))
+            }
+
+            heading.text = item.name
+            meta.text = "Category: ${item.category} | Unit: ${item.uom} | Reorder Level: ${item.reorderLevel}"
+            receivedText.text = "Received: $receivedTotal"
+            issuedText.text = "Issued: $issuedTotal"
+            balanceText.text = "Overall Balance: $overallBalance"
+
+            val breakdownContainer = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+            }
+
+            stores.filter { it.id != "master" }.forEach { store ->
+                val value = storeBalances[store.id] ?: 0
+                val t = TextView(this).apply {
+                    text = "${store.name}: $value"
+                    setTextColor(Color.parseColor("#AAAAAA"))
+                    textSize = 12f
+                    setPadding(0, dpToPx(4), 0, 0)
+                }
+                breakdownContainer.addView(t)
+            }
+
+            // Since the XML item_card uses specific IDs without matching runtime names, we finalize with a custom card view.
+            val finalCard = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(Color.parseColor("#1E1E1E"))
+                setPadding(dpToPx(14), dpToPx(14), dpToPx(14), dpToPx(14))
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                    background = GradientDrawable().apply {
+                        setColor(Color.parseColor("#1E1E1E"))
+                        cornerRadius = 8f
+                        setStroke(dpToPx(1), Color.parseColor("#333333"))
+                    }
+                }
+            }
+
+            finalCard.addView(titleRow)
+            finalCard.addView(TextView(this).apply {
+                text = "Category: ${item.category} | Unit: ${item.uom} | Reorder Level: ${item.reorderLevel}"
+                setTextColor(Color.parseColor("#AAAAAA"))
+                textSize = 12f
+                setPadding(0, dpToPx(8), 0, 0)
+            })
+            finalCard.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                weightSum = 3f
+                setPadding(0, dpToPx(10), 0, 0)
+                addView(TextView(this@MainActivity).apply { text = "Received: $receivedTotal"; setTextColor(Color.WHITE); textSize = 12f }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                addView(TextView(this@MainActivity).apply { text = "Issued: $issuedTotal"; setTextColor(Color.WHITE); textSize = 12f }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                addView(TextView(this@MainActivity).apply { text = "Balance: $overallBalance"; setTextColor(Color.WHITE); textSize = 12f }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            })
+            finalCard.addView(TextView(this).apply {
+                text = "Store Breakdowns"
+                setTextColor(Color.parseColor("#FFFFFF"))
+                textSize = 12f
+                setTypeface(typeface, Typeface.BOLD)
+                setPadding(0, dpToPx(10), 0, dpToPx(4))
+            })
+            finalCard.addView(breakdownContainer)
+            contentContainer.addView(finalCard)
+        }
+    }
+
+    private fun renderStoreView(storeId: String) {
+        val store = stores.firstOrNull { it.id == storeId } ?: return
+        val transactions = dbHelper.getTransactions().filter { it.storeId == storeId }
+
+        if (transactions.isEmpty()) {
+            val empty = TextView(this).apply {
+                text = "No transactions recorded for ${store.name} yet."
+                setTextColor(Color.parseColor("#AAAAAA"))
+                textSize = 14f
+                setPadding(0, dpToPx(16), 0, 0)
+            }
+            contentContainer.addView(empty)
+            return
+        }
+
+        val table = TableLayout(this).apply {
+            setPadding(0, dpToPx(8), 0, 0)
+        }
+
+        val header = TableRow(this)
+        val headerTitles = listOf("Date", "Item", "Type", "Qty", "Dept", "Ref")
+        headerTitles.forEach { title ->
+            header.addView(TextView(this).apply {
+                text = title
+                setTextColor(Color.parseColor("#AAAAAA"))
+                setTypeface(typeface, Typeface.BOLD)
+                textSize = 12f
+                setPadding(dpToPx(8), dpToPx(8), dpToPx(8), dpToPx(8))
+            })
+        }
+        table.addView(header)
+
+        val items = dbHelper.getItems()
+        transactions.forEach { txn ->
+            val row = TableRow(this)
+            val itemName = items.firstOrNull { it.id == txn.itemId }?.name ?: "Unknown"
+            val values = listOf(txn.date, itemName, txn.type, txn.qty.toString(), txn.recipient, txn.ref)
+            values.forEach { value ->
+                row.addView(TextView(this).apply {
+                    text = value
+                    setTextColor(Color.WHITE)
+                    textSize = 12f
+                    setPadding(dpToPx(8), dpToPx(8), dpToPx(8), dpToPx(8))
+                })
+            }
+            table.addView(row)
+        }
+
+        contentContainer.addView(table)
+    }
+
+    private fun dpToPx(value: Int): Int {
+        return (value * resources.displayMetrics.density).toInt()
+    }
+}
